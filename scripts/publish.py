@@ -15,18 +15,23 @@ import argparse
 import hashlib
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
+from botocore.exceptions import ClientError
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_KEY = "manifest.json"
+# Several apps published at once (e.g. phone + TV builds) race on manifest.json; the loser retries.
+MAX_MANIFEST_ATTEMPTS = 8
 
 
 def load_env():
@@ -100,6 +105,47 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def read_manifest(s3, bucket):
+    """The current manifest and its ETag (None when nothing has been published yet)."""
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=MANIFEST_KEY)
+        return json.loads(obj["Body"].read()), obj["ETag"]
+    except s3.exceptions.NoSuchKey:
+        return {"apps": {}}, None
+
+
+def is_write_conflict(e):
+    """S3's answer to a conditional write that lost a race with another writer."""
+    return e.response.get("Error", {}).get("Code") in ("PreconditionFailed", "ConditionalRequestConflict")
+
+
+def commit_entry(s3, bucket, pkg, build_entry, check, sleep=time.sleep):
+    """Writes build_entry(current) into the manifest under pkg without losing concurrent publishes.
+
+    Each attempt reads the latest manifest, re-runs check(current) against it, and writes only if
+    the manifest is still the version it read (If-Match). When another publish got in first, S3
+    refuses the write and we retry on top of their change.
+    """
+    for attempt in range(MAX_MANIFEST_ATTEMPTS):
+        manifest, etag = read_manifest(s3, bucket)
+        current = manifest["apps"].get(pkg)
+        check(current)
+        manifest["apps"][pkg] = build_entry(current)
+        put = {"Bucket": bucket, "Key": MANIFEST_KEY, "ContentType": "application/json",
+               "Body": json.dumps(manifest, indent=2).encode()}
+        put.update({"IfMatch": etag} if etag else {"IfNoneMatch": "*"})
+        try:
+            s3.put_object(**put)
+            return manifest["apps"][pkg]
+        except ClientError as e:
+            if not is_write_conflict(e):
+                raise
+            print(f"manifest changed by another publish; retrying ({attempt + 1}/{MAX_MANIFEST_ATTEMPTS})")
+            sleep(random.uniform(0.2, 1.0) * (attempt + 1))
+    sys.exit(f"{pkg}: gave up after {MAX_MANIFEST_ATTEMPTS} conflicting manifest writes; "
+             "the APK is uploaded, re-run to publish it")
+
+
 def main():
     load_env()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -119,53 +165,51 @@ def main():
                             region_name=os.environ.get("AWS_REGION", "eu-central-1"))
     s3 = session.client("s3")
 
-    try:
-        obj = s3.get_object(Bucket=bucket, Key=MANIFEST_KEY)
-        manifest, etag = json.loads(obj["Body"].read()), obj["ETag"]
-    except s3.exceptions.NoSuchKey:
-        manifest, etag = {"apps": {}}, None
+    def check(current):
+        if current:
+            if current.get("signerSha256") and current["signerSha256"] != signer:
+                sys.exit(f"{pkg}: signing certificate differs from the published one; devices could not update")
+            if code <= current["versionCode"] and not args.force:
+                sys.exit(f"{pkg}: versionCode {code} is not higher than published {current['versionCode']} (use --force)")
 
-    current = manifest["apps"].get(pkg)
-    if current:
-        if current.get("signerSha256") and current["signerSha256"] != signer:
-            sys.exit(f"{pkg}: signing certificate differs from the published one; devices could not update")
-        if code <= current["versionCode"] and not args.force:
-            sys.exit(f"{pkg}: versionCode {code} is not higher than published {current['versionCode']} (use --force)")
+    # Check before uploading anything; commit_entry checks again against the manifest it writes.
+    check(read_manifest(s3, bucket)[0]["apps"].get(pkg))
 
     key = f"apps/{pkg}/{code}.apk"
     print(f"uploading {pkg} {info['versionName']} ({code}) -> s3://{bucket}/{key}")
     s3.upload_file(str(args.apk), bucket, key,
                    ExtraArgs={"ContentType": "application/vnd.android.package-archive"})
 
-    icon_key = current.get("iconKey") if current else None
     icon_bytes = args.icon.read_bytes() if args.icon else None
     if icon_bytes is None and info["iconPath"]:
         with zipfile.ZipFile(args.apk) as z:
             icon_bytes = z.read(info["iconPath"])
+    new_icon_key = None
     if icon_bytes:
-        icon_key = f"apps/{pkg}/icon-{code}.png"
-        s3.put_object(Bucket=bucket, Key=icon_key, Body=icon_bytes, ContentType="image/png")
+        new_icon_key = f"apps/{pkg}/icon-{code}.png"
+        s3.put_object(Bucket=bucket, Key=new_icon_key, Body=icon_bytes, ContentType="image/png")
 
-    manifest["apps"][pkg] = {
-        "packageName": pkg,
-        "name": args.name or (current or {}).get("name") or info["name"],
-        "versionCode": code,
-        "versionName": info["versionName"],
-        "minSdk": info["minSdk"],
-        "size": args.apk.stat().st_size,
-        "sha256": sha256_file(args.apk),
-        "signerSha256": signer,
-        "changelog": args.changelog,
-        "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "key": key,
-        "iconKey": icon_key,
-    }
-    put = {"Bucket": bucket, "Key": MANIFEST_KEY, "ContentType": "application/json",
-           "Body": json.dumps(manifest, indent=2).encode()}
-    # Fail instead of overwriting if someone else published in the meantime.
-    put.update({"IfMatch": etag} if etag else {"IfNoneMatch": "*"})
-    s3.put_object(**put)
-    print(f"published {manifest['apps'][pkg]['name']} {info['versionName']}")
+    size, sha256 = args.apk.stat().st_size, sha256_file(args.apk)
+
+    def build_entry(current):
+        current = current or {}
+        return {
+            "packageName": pkg,
+            "name": args.name or current.get("name") or info["name"],
+            "versionCode": code,
+            "versionName": info["versionName"],
+            "minSdk": info["minSdk"],
+            "size": size,
+            "sha256": sha256,
+            "signerSha256": signer,
+            "changelog": args.changelog,
+            "publishedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "key": key,
+            "iconKey": new_icon_key or current.get("iconKey"),
+        }
+
+    entry = commit_entry(s3, bucket, pkg, build_entry, check)
+    print(f"published {entry['name']} {info['versionName']}")
 
 
 if __name__ == "__main__":
