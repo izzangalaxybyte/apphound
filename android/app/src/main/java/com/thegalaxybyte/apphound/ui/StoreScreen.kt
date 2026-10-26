@@ -54,8 +54,11 @@ import com.thegalaxybyte.apphound.StoreViewModel
 @Composable
 fun StoreScreen(vm: StoreViewModel, onOpenApp: (String) -> Unit, onAllowInstalls: () -> Unit) {
     val state by vm.state.collectAsStateWithLifecycle()
+    // Every time the store comes to the front (first launch or reopened from the background):
+    // update installed versions right away, then fetch the catalog.
     LifecycleResumeEffect(Unit) {
         vm.refreshInstalled()
+        vm.refresh()
         onPauseOrDispose { }
     }
 

@@ -49,8 +49,8 @@ class StoreViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(StoreState())
     val state: StateFlow<StoreState> = _state
 
+    // No refresh here: StoreScreen calls refresh() on every resume, including the first.
     init {
-        refresh()
         viewModelScope.launch {
             ApkInstaller.results.collect { result ->
                 when (result) {
@@ -65,6 +65,7 @@ class StoreViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
+        if (_state.value.loading) return
         viewModelScope.launch {
             _state.update { it.copy(loading = true, error = null) }
             try {
