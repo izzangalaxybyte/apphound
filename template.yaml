@@ -1,0 +1,77 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: apphound - private Android app store (APK bucket + list/latest API)
+
+Parameters:
+  TokenParameterName:
+    Type: String
+    Default: /apphound/api-token
+    Description: SSM SecureString holding the bearer token the store app sends (scripts/deploy.sh creates it).
+
+Resources:
+  # Private: APKs and icons are only reachable through short-lived presigned URLs from the API.
+  ApkBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub apphound-apks-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled  # keeps old manifest.json versions, so a bad publish can be rolled back
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-manifest-versions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/apphound-api
+      RetentionInDays: 30
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: ApiLogGroup
+    Properties:
+      FunctionName: apphound-api
+      CodeUri: src/
+      Handler: apphound_api.handler.handler
+      Runtime: python3.13
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 10
+      PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/apphound-boundary
+      Environment:
+        Variables:
+          BUCKET: !Ref ApkBucket
+          TOKEN_PARAM: !Ref TokenParameterName
+          URL_TTL_SECONDS: "900"
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref ApkBucket
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TokenParameterName}
+      FunctionUrlConfig:
+        AuthType: NONE  # the function checks the bearer token itself
+
+Outputs:
+  ApiUrl:
+    Value: !GetAtt ApiFunctionUrl.FunctionUrl
+  BucketName:
+    Value: !Ref ApkBucket

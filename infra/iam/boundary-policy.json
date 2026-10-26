@@ -1,0 +1,30 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadOwnBuckets",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::apphound-*", "arn:aws:s3:::apphound-*/*"]
+    },
+    {
+      "Sid": "ReadOwnSecrets",
+      "Effect": "Allow",
+      "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+      "Resource": "arn:aws:ssm:eu-central-1:${ACCOUNT_ID}:parameter/apphound/*"
+    },
+    {
+      "Sid": "DecryptSecretsViaSsm",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"kms:ViaService": "ssm.eu-central-1.amazonaws.com"}}
+    },
+    {
+      "Sid": "OwnLogs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": "arn:aws:logs:eu-central-1:${ACCOUNT_ID}:log-group:/aws/lambda/apphound-*"
+    }
+  ]
+}

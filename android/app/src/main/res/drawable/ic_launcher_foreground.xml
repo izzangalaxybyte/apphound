@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A box with a down arrow: "apps delivered". Drawn inside the 66dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M34,52h40v20a4,4 0 0 1 -4,4h-32a4,4 0 0 1 -4,-4z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M50,30h8v16h8l-12,12l-12,-12h8z" />
+</vector>

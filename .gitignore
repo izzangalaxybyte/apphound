@@ -1,0 +1,22 @@
+# Local secrets: API URL/token, AWS profile name, signing config. Never commit.
+.env
+*.jks
+*.keystore
+*.p12
+keystore.properties
+
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.aws-sam/
+
+# Android
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+.idea/
+*.iml
+.DS_Store

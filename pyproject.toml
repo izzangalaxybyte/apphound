@@ -1,0 +1,16 @@
+[project]
+name = "apphound"
+version = "0.1.0"
+description = "Private Android app store backend and publish tooling"
+requires-python = ">=3.13"
+dependencies = ["boto3>=1.40"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

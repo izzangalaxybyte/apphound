@@ -1,0 +1,16 @@
+version = 0.1
+
+[default.global.parameters]
+stack_name = "apphound"
+region = "eu-central-1"
+profile = "apphound"  # scoped deployer, see infra/iam/setup.sh
+
+[default.build.parameters]
+cached = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+s3_prefix = "apphound"
+confirm_changeset = false
+tags = "app=apphound"
