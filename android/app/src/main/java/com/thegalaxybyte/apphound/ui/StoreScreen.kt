@@ -97,7 +97,7 @@ fun StoreScreen(vm: StoreViewModel, onOpenApp: (String) -> Unit, onAllowInstalls
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("apphound") },
+                title = { Text("Appster") },
                 actions = {
                     val source = remember { MutableInteractionSource() }
                     IconButton(
@@ -122,7 +122,7 @@ fun StoreScreen(vm: StoreViewModel, onOpenApp: (String) -> Unit, onAllowInstalls
                 if (state.needsInstallPermission) {
                     item {
                         Notice(
-                            text = "Allow apphound to install apps, then try again.",
+                            text = "Allow Appster to install apps, then try again.",
                             action = "Allow" to onAllowInstalls,
                             dismiss = vm::dismissInstallPermission,
                             modifier = rowWidth,
